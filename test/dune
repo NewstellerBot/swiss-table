@@ -92,3 +92,8 @@
    (swiss_neon -> test_diff_simd.neon.ml)
    (swiss_sse -> test_diff_simd.sse.ml)
    (-> test_diff_simd.none.ml))))
+
+(test
+ (name test_purge)
+ (modules test_purge)
+ (libraries swiss))

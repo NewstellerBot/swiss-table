@@ -284,12 +284,32 @@ The upsert walk runs **without reserving**:
 
 Trigger only from the insert-absent path (§3 policy): `reserve 1` when
 `growth_left = 0` and the chosen slot is EMPTY. Heuristic per ALG §5:
-`items + 1 <= capacity/2` → same-size copying rehash (tombstone purge), else
-grow. Copying rehash/resize: build the fully-populated new core (re-hash keys;
-fresh table → first-empty inserts), compute `growth_left = capacity − items`,
-then **single `t.core <-` commit** (a raising user hash mid-rehash leaves the
-table untouched — REV oxcaml#3). Shadow table untouched by resize (keyed by
-key, not slot). Retired core never written (REV algorithm#2).
+`items + 1 <= capacity/2` → same-size tombstone purge, else grow.
+
+**Tombstone purge — two strategies, selected by `EQH.pure_hash`:**
+- `pure_hash = true` (the generic interface: `caml_hash_exn` runs no user
+  code, is deterministic, and cannot raise on keys it already hashed at
+  insertion): **true in-place rehash** (ALG §8 / hashbrown
+  `rehash_in_place`). Phase 1 converts ctrl bytewise (FULL→DELETED marking
+  live entries, specials→EMPTY) and repairs the mirrored tail; phase 2
+  relocates every DELETED-marked entry via `find_insert_fresh` with the
+  same-window check, move-to-EMPTY, or swap-with-unplaced. Zero allocation,
+  no transient second core. Publish ordering holds at every instruction
+  boundary (slots written before FULL ctrl; sources flipped non-FULL before
+  dummying); no user code runs mid-purge, so there is no observation point.
+  Termination: every inner step either finishes a slot or marks a new slot
+  FULL (strictly fewer unplaced entries). Validated by `test/test_purge.ml`
+  (forced trigger, 0.0 minor words, Obj-level invariants).
+- `pure_hash = false` (functors: user hash may raise or reenter): copying
+  purge — build the fully-populated fresh core (re-hash keys; fresh table →
+  first-empty inserts), compute `growth_left = capacity − items`, then
+  **single `t.core <-` commit** (a raising user hash mid-rehash leaves the
+  table untouched — REV oxcaml#3). Growth uses this copying strategy in all
+  instantiations.
+
+Shadow tables share the parent's EQH, so generic parents get in-place shadow
+purges too. Shadow table untouched by resize (keyed by key, not slot).
+Retired cores are never written (REV algorithm#2).
 
 ## 4. Randomization (API §2.3, replicated verbatim)
 

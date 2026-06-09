@@ -185,6 +185,13 @@ module type EQH = sig @@ portable
 
   (* seed -> key -> nonnegative 30-bit hash *)
   val hash : int -> Obj.t -> int
+
+  (* True iff [hash] runs no user code and re-hashing a key that was
+     already hashed at insertion cannot raise (i.e. the deterministic
+     polymorphic hash). Enables the in-place tombstone purge; functor
+     instantiations must say false so the copying purge preserves
+     exception-atomicity under raising/reentrant user hashes. *)
+  val pure_hash : bool
 end
 
 module Engine (E : EQH) = struct
@@ -292,12 +299,82 @@ module Engine (E : EQH) = struct
     done;
     !result
 
-  (* Same-size tombstone purge or growth; builds the new core fully
-     (user hash may raise: [t] is untouched until the single commit). *)
+  (* True in-place tombstone purge (ALG §8 / hashbrown rehash_in_place).
+     Only used when [E.pure_hash]: the purge re-hashes stored keys with
+     the live core in a torn state, so the hash must run no user code
+     and must not raise — both hold for the deterministic generic hash
+     applied to keys it already hashed at insertion. With no user-code
+     call inside, there is no observation point mid-purge; the publish
+     ordering (FULL implies real entry) is maintained throughout, so
+     even the documented-UB unsynchronized reader stays memory-safe. *)
+  let rehash_in_place (t : repr) =
+    prerr_string "P";
+    let c = t.c in
+    let ctrl = c.ctrl and keys = c.keys and vals = c.vals and mask = c.mask in
+    let buckets = mask + 1 in
+    (* Phase 1: FULL -> DELETED (live entry awaiting placement);
+       EMPTY/DELETED -> EMPTY. Bytewise: the purge is O(n) in hash
+       calls anyway, group-width-at-a-time conversion is not worth a
+       GROUP extension. Then repair the mirrored tail. *)
+    for i = 0 to buckets - 1 do
+      Bytes.unsafe_set ctrl i
+        (if is_full_byte (Bytes.unsafe_get ctrl i) then ctrl_deleted
+         else ctrl_empty)
+    done;
+    Bytes.blit ctrl 0 ctrl buckets G.width;
+    (* Phase 2: place every DELETED-marked live entry. Each iteration
+       of the inner loop either finishes slot [i] (same-window or
+       move-to-EMPTY) or swaps with another not-yet-placed entry whose
+       own slot [new_i] becomes FULL — strictly decreasing the number
+       of unplaced entries, hence termination. *)
+    for i = 0 to buckets - 1 do
+      while Bytes.unsafe_get ctrl i = ctrl_deleted do
+        let h = E.hash t.seed (Array.unsafe_get keys i) in
+        let start = h land mask in
+        let new_i = find_insert_fresh c h in
+        if
+          ((i - start) land mask) / G.width
+          = ((new_i - start) land mask) / G.width
+        then
+          (* Already reachable from its own probe window: keep it. *)
+          set_ctrl c i (Char.unsafe_chr (h2_of_hash h))
+        else if Bytes.unsafe_get ctrl new_i = ctrl_empty then begin
+          (* Move: slots written before the FULL ctrl byte; the source
+             flips non-FULL before being dummied (publish ordering). *)
+          Array.unsafe_set keys new_i (Array.unsafe_get keys i);
+          Array.unsafe_set vals new_i (Array.unsafe_get vals i);
+          set_ctrl c new_i (Char.unsafe_chr (h2_of_hash h));
+          set_ctrl c i ctrl_empty;
+          Array.unsafe_set keys i (dummy ());
+          Array.unsafe_set vals i (dummy ())
+        end
+        else begin
+          (* Target holds another unplaced entry: swap, mark the
+             target FULL (it now holds OUR entry, written first), and
+             keep placing the displaced entry at [i]. *)
+          prerr_string "S";
+          let k = Array.unsafe_get keys new_i in
+          let v = Array.unsafe_get vals new_i in
+          Array.unsafe_set keys new_i (Array.unsafe_get keys i);
+          Array.unsafe_set vals new_i (Array.unsafe_get vals i);
+          set_ctrl c new_i (Char.unsafe_chr (h2_of_hash h));
+          Array.unsafe_set keys i k;
+          Array.unsafe_set vals i v
+        end
+      done
+    done;
+    t.growth_left <- capacity_of_buckets buckets - t.items
+
+  (* Same-size tombstone purge or growth. Purges happen in place for
+     pure-hash instantiations (zero allocation, no transient copy);
+     otherwise — and for growth — a fresh core is fully built before
+     the single commit (a raising user hash leaves [t] untouched). *)
   let reserve_grow (t : repr) =
     let c = t.c in
     let buckets = c.mask + 1 in
     let full_cap = capacity_of_buckets buckets in
+    if E.pure_hash && t.items + 1 <= full_cap / 2 then rehash_in_place t
+    else begin
     let nb =
       if t.items + 1 <= full_cap / 2 then buckets
       else buckets_for_capacity (max (t.items + 1) (full_cap + 1))
@@ -320,6 +397,7 @@ module Engine (E : EQH) = struct
     done;
     t.growth_left <- capacity_of_buckets nb - t.items;
     t.c <- nc
+    end
   (* The retired core [c] is never written again: live iterators may
      still hold it (design §2). *)
 
@@ -701,6 +779,10 @@ module GenericEqh = struct
   let eq_find (q : Obj.t) (s : Obj.t) = Stdlib.compare q s = 0
   let eq_upd (s : Obj.t) (q : Obj.t) = Stdlib.compare s q = 0
   let hash seed (k : Obj.t) = seeded_hash_param 10 100 seed k
+
+  (* caml_hash_exn: deterministic, no user code; re-hashing stored
+     keys cannot raise (insertion already hashed them). *)
+  let pure_hash = true
 end
 
 module Gen = Engine (GenericEqh)
@@ -950,6 +1032,9 @@ end = struct
     let hash seed (k : Obj.t) =
       let h = H.seeded_hash seed (Obj.obj k : key) in
       (h * 0x2545F4914F6CDD1D) lsr 33 land 0x3FFFFFFF
+
+    (* user-supplied hash: may raise or reenter — copying purge only *)
+    let pure_hash = false
   end)
 
   let create ?(random = is_randomized ()) initial_capacity =
