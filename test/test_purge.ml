@@ -38,9 +38,10 @@ let check_invariants t =
   let cap = b / 8 * 7 in
   assert (fulls t = items t);
   assert (growth_left t + items t + tombstones t = cap);
-  (* mirrored tail *)
+  (* mirrored tail (width-agnostic: ctrl length = buckets + width) *)
   let c = ctrl t in
-  for i = 0 to 7 do
+  let width = Bytes.length c - b in
+  for i = 0 to width - 1 do
     assert (Bytes.get c (b + i) = Bytes.get c i)
   done;
   (* non-FULL slots hold the dummy (the converse cannot be asserted:
@@ -127,6 +128,98 @@ let () =
   end;
   Printf.printf "purge[generic]: %d in-place purges, %.1f minor words, OK\n"
     !purges words;
+
+  (* --- swap-branch coverage: fill to FULL capacity (7/8 load pushes
+     ~1/3 of entries out of their first probe window), trim to
+     cap/2 - 2 (erases inside full groups pin growth_left low), then
+     churn fresh keys with items pinned until the purge fires. The
+     displaced survivors must be relocated while their home windows
+     still hold unplaced entries — this recipe was measured (via an
+     instrumented engine) to execute the displaced-entry SWAP branch
+     of rehash_in_place ~25 times over 50 rounds at seed 0; correctness
+     is asserted from a key-range model after every purge. --- *)
+  let t2 : (int, int) Swiss.t = Swiss.create ~random:false 100 in
+  let b2 = buckets t2 in
+  let cap2 = b2 / 8 * 7 in
+  let target = (cap2 / 2) - 2 in
+  let total_purges = ref 0 in
+  for round = 0 to 49 do
+    let base = 100_000 + (round * 10_000) in
+    (* fill to full capacity *)
+    let nfill = ref 0 in
+    while growth_left t2 > 0 do
+      Swiss.add t2 (base + !nfill) round;
+      incr nfill
+    done;
+    (* trim oldest down to [target] live keys *)
+    let live0 = items t2 in
+    let nrm = ref 0 in
+    while items t2 > target do
+      Swiss.remove t2 (base + !nrm);
+      incr nrm
+    done;
+    ignore live0;
+    check_invariants t2;
+    (* churn fresh keys, items pinned, until a purge fires *)
+    let cbase = base + 5_000 in
+    let ca = ref 0 in
+    let cr = ref 0 in
+    let fired = ref false in
+    let guard = ref 0 in
+    while (not !fired) && !guard < 5_000 do
+      incr guard;
+      if items t2 >= target then begin
+        (* remove the oldest remaining key: first the fill survivors,
+           then churn keys *)
+        (if base + !nrm < base + !nfill then begin
+           Swiss.remove t2 (base + !nrm);
+           incr nrm
+         end
+         else begin
+           Swiss.remove t2 (cbase + !cr);
+           incr cr
+         end)
+      end
+      else begin
+        let tb = tombstones t2 in
+        Swiss.add t2 (cbase + !ca) round;
+        incr ca;
+        if tb > 0 && tombstones t2 = 0 then begin
+          fired := true;
+          incr total_purges;
+          assert (buckets t2 = b2);
+          check_invariants t2;
+          (* model check: every live key findable, every removed gone *)
+          for i = base + !nrm to base + !nfill - 1 do
+            assert (Swiss.find_opt t2 i = Some round)
+          done;
+          for i = base to base + !nrm - 1 do
+            assert (not (Swiss.mem t2 i))
+          done;
+          for i = cbase + !cr to cbase + !ca - 1 do
+            assert (Swiss.find_opt t2 i = Some round)
+          done;
+          for i = cbase to cbase + !cr - 1 do
+            assert (not (Swiss.mem t2 i))
+          done
+        end
+      end
+    done;
+    assert !fired;
+    (* clear the round's survivors so the next round starts fresh
+       (drains via removes, keeping the same core: more tombstones) *)
+    for i = base + !nrm to base + !nfill - 1 do
+      Swiss.remove t2 i
+    done;
+    for i = cbase + !cr to cbase + !ca - 1 do
+      Swiss.remove t2 i
+    done;
+    assert (Swiss.length t2 = 0)
+  done;
+  assert (!total_purges >= 50);
+  check_invariants t2;
+  Printf.printf "purge[swap-coverage]: %d purges over 50 full-load rounds, OK\n"
+    !total_purges;
 
   (* --- functor route (copying purge): correctness only --- *)
   let module M = Swiss.Make (struct

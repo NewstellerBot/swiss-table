@@ -303,12 +303,17 @@ module Engine (E : EQH) = struct
      Only used when [E.pure_hash]: the purge re-hashes stored keys with
      the live core in a torn state, so the hash must run no user code
      and must not raise — both hold for the deterministic generic hash
-     applied to keys it already hashed at insertion. With no user-code
-     call inside, there is no observation point mid-purge; the publish
-     ordering (FULL implies real entry) is maintained throughout, so
-     even the documented-UB unsynchronized reader stays memory-safe. *)
+     applied to keys whose contents are unchanged since insertion. A
+     key MUTATED after insertion into something caml_hash_exn rejects
+     (an OxCaml mixed block) can still raise mid-purge: the panic
+     guard below then drops the not-yet-placed entries and restores
+     the invariants before re-raising (hashbrown's behavior; mutating
+     stored keys is documented-unspecified for any hash table). With
+     no synchronous user-code call inside, there is no observation
+     point mid-purge for ordinary code (asynchronous callbacks at poll
+     points see an unspecified-but-memory-safe state); the publish
+     ordering (FULL implies real entry) is maintained throughout. *)
   let rehash_in_place (t : repr) =
-    prerr_string "P";
     let c = t.c in
     let ctrl = c.ctrl and keys = c.keys and vals = c.vals and mask = c.mask in
     let buckets = mask + 1 in
@@ -327,8 +332,9 @@ module Engine (E : EQH) = struct
        move-to-EMPTY) or swaps with another not-yet-placed entry whose
        own slot [new_i] becomes FULL — strictly decreasing the number
        of unplaced entries, hence termination. *)
-    for i = 0 to buckets - 1 do
-      while Bytes.unsafe_get ctrl i = ctrl_deleted do
+    (try
+      for i = 0 to buckets - 1 do
+       while Bytes.unsafe_get ctrl i = ctrl_deleted do
         let h = E.hash t.seed (Array.unsafe_get keys i) in
         let start = h land mask in
         let new_i = find_insert_fresh c h in
@@ -352,7 +358,6 @@ module Engine (E : EQH) = struct
           (* Target holds another unplaced entry: swap, mark the
              target FULL (it now holds OUR entry, written first), and
              keep placing the displaced entry at [i]. *)
-          prerr_string "S";
           let k = Array.unsafe_get keys new_i in
           let v = Array.unsafe_get vals new_i in
           Array.unsafe_set keys new_i (Array.unsafe_get keys i);
@@ -361,8 +366,23 @@ module Engine (E : EQH) = struct
           Array.unsafe_set keys i k;
           Array.unsafe_set vals i v
         end
+       done
       done
-    done;
+    with e ->
+      (* Panic guard (hashbrown rehash_in_place): a raising re-hash
+         must not leave live entries invisibly marked DELETED. Drop
+         every not-yet-placed entry, restore the accounting, re-raise.
+         Costs nothing on the non-raising path. *)
+      for i = 0 to buckets - 1 do
+        if Bytes.unsafe_get ctrl i = ctrl_deleted then begin
+          set_ctrl c i ctrl_empty;
+          Array.unsafe_set keys i (dummy ());
+          Array.unsafe_set vals i (dummy ());
+          t.items <- t.items - 1
+        end
+      done;
+      t.growth_left <- capacity_of_buckets buckets - t.items;
+      raise e);
     t.growth_left <- capacity_of_buckets buckets - t.items
 
   (* Same-size tombstone purge or growth. Purges happen in place for

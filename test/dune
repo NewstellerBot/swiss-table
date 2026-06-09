@@ -97,3 +97,41 @@
  (name test_purge)
  (modules test_purge)
  (libraries swiss))
+
+(rule
+ (target test_purge_simd.neon.ml)
+ (deps test_purge.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_neon\n\n")
+    (cat test_purge.ml)))))
+
+(rule
+ (target test_purge_simd.sse.ml)
+ (deps test_purge.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_sse\n\n")
+    (cat test_purge.ml)))))
+
+(rule
+ (target test_purge_simd.none.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let () = print_endline \"test_purge_simd: no SIMD variant on this architecture\"\n"))))
+
+(test
+ (name test_purge_simd)
+ (modules test_purge_simd)
+ (libraries
+  (select
+   test_purge_simd.ml
+   from
+   (swiss_neon -> test_purge_simd.neon.ml)
+   (swiss_sse -> test_purge_simd.sse.ml)
+   (-> test_purge_simd.none.ml))))

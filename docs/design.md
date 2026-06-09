@@ -298,8 +298,13 @@ Trigger only from the insert-absent path (§3 policy): `reserve 1` when
   boundary (slots written before FULL ctrl; sources flipped non-FULL before
   dummying); no user code runs mid-purge, so there is no observation point.
   Termination: every inner step either finishes a slot or marks a new slot
-  FULL (strictly fewer unplaced entries). Validated by `test/test_purge.ml`
-  (forced trigger, 0.0 minor words, Obj-level invariants).
+  FULL (strictly fewer unplaced entries). A hashbrown-style panic guard
+  covers the one raising edge (a key mutated post-insertion into a value
+  `caml_hash_exn` rejects): unplaced entries are dropped and the accounting
+  restored before re-raising. Validated by `test/test_purge.ml` (forced
+  trigger, 0.0 minor words, Obj-level invariants, and a full-load
+  fill/trim/churn scenario measured to execute the displaced-entry swap
+  branch; SIMD instantiations via the `(select)` clones).
 - `pure_hash = false` (functors: user hash may raise or reenter): copying
   purge — build the fully-populated fresh core (re-hash keys; fresh table →
   first-empty inserts), compute `growth_left = capacity − items`, then
