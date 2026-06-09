@@ -8,6 +8,12 @@
 ; before this library is trusted. See group_sse.inc's header.
 (library
  (name swiss_sse)
+ ; test_group_sse.ml in this directory is NOT a module of this library:
+ ; it is the selftest BODY that CI concatenates after a generated
+ ; `module G = struct ... end` prelude (see the workflow's "SSE2 group
+ ; selftest" step). Without this filter dune tries to compile it as a
+ ; library module and fails with "Unbound module G".
+ (modules swiss_sse)
  (modes native)
  (enabled_if
   (= %{architecture} amd64))
