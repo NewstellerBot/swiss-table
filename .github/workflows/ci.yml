@@ -1,0 +1,120 @@
+# Cross-architecture CI grid: build + test + benchmark the Swiss table
+# implementations (portable SWAR, per-arch SIMD: NEON on arm64 / SSE2 on
+# amd64) against the stdlib Hashtbl of the same OxCaml compiler, on every
+# platform OxCaml supports. See docs/research/ci-strategy.md for the
+# research behind the choices here (runner labels, toolchain, caching).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    # Cold toolchain build (full OxCaml compiler bootstrap) is ~35-90
+    # min depending on platform; warm opam cache restores in ~1-3 min.
+    timeout-minutes: 180
+    continue-on-error: ${{ matrix.experimental == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-24.04 }
+          # free for public repos
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
+          # pinned: macos-latest migrates to macOS 26 from 2026-06-15
+          - { platform: macos-arm64, runner: macos-15 }
+          # last free Intel macs (until Aug 2027). Upstream: "x86 macOS
+          # may still work" — not CI-tested by oxcaml itself.
+          - { platform: macos-x86_64, runner: macos-15-intel, experimental: true }
+    steps:
+      - uses: actions/checkout@v6
+
+      # oxcaml's own CI does this; the ubuntu images ship autoconf.
+      - name: Install autoconf (macOS)
+        if: runner.os == 'macOS'
+        run: HOMEBREW_NO_INSTALL_CLEANUP=TRUE brew install autoconf
+
+      # Builds the OxCaml compiler from the ox opam repository into a
+      # local switch. dune is baked into the switch invariant so it
+      # lands inside setup-ocaml's automatic opam cache (saved right
+      # after switch creation). Cache key includes platform + compiler
+      # string + repo URLs; no time expiry.
+      - name: Set up OxCaml 5.2.0+ox
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ocaml-variants.5.2.0+ox,dune
+          opam-repositories: |
+            ox: git+https://github.com/oxcaml/opam-repository.git
+            default: git+https://github.com/ocaml/opam-repository.git
+          opam-pin: false
+          dune-cache: true
+
+      - name: Build
+        run: opam exec -- dune build @all
+
+      # First-run hardware validation of the SSE2 builtins: group_sse
+      # was derived from the amd64 backend sources on an arm64 machine
+      # and has never executed on real x86 silicon until this step.
+      - name: SSE2 group selftest (x86_64)
+        if: contains(matrix.platform, 'x86_64')
+        working-directory: lib_sse
+        run: |
+          { echo 'open! Stdlib'; echo 'module G = struct'; cat group_sse.inc; echo 'end'; cat test_group_sse.ml; } > test_group_sse_main.ml
+          opam exec -- ocamlopt -O3 -extension simd sse_stubs.c test_group_sse_main.ml -o test_group_sse_main
+          ./test_group_sse_main
+
+      # Differential fuzzer (~4M ops vs Stdlib.Hashtbl, both the SWAR
+      # and the per-arch SIMD instantiation) + unit/regression suites.
+      - name: Test
+        run: opam exec -- dune runtest
+
+      # Hot paths must be allocation-free (0.00 minor words/op).
+      - name: Allocation probes
+        run: |
+          ./_build/default/bench/allocprobe.exe
+          ./_build/default/bench/allocprobe_simd.exe
+
+      # Per-family processes (BENCH_ONLY) so no implementation is
+      # benchmarked in a hotter thermal/contention state than another.
+      # CI runners are shared machines: numbers are indicative.
+      - name: Benchmarks
+        run: |
+          mkdir -p bench-results
+          out="bench-results/bench-${{ matrix.platform }}.txt"
+          : > "$out"
+          for fam in "Swiss/" "Swiss.Make" "Hashtbl/" "Hashtbl.Make"; do
+            sleep 5
+            BENCH_ONLY="$fam" ./_build/default/bench/bench.exe 1000 100000 1000000 | tee -a "$out"
+          done
+          sleep 5
+          ./_build/default/bench/bench_simd.exe 1000 100000 1000000 | tee -a "$out"
+
+      - name: Per-platform summary
+        run: python3 scripts/aggregate_bench.py bench-results/*.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: results-${{ matrix.platform }}
+          path: bench-results/
+
+  grid:
+    name: cross-platform grid
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: results-*
+          merge-multiple: true
+          path: results/
+      - name: Aggregate grid
+        run: |
+          ls results/ || true
+          python3 scripts/aggregate_bench.py results/*.txt >> "$GITHUB_STEP_SUMMARY"

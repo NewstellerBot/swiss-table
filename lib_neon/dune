@@ -1,0 +1,25 @@
+; NEON (arm64) 16-wide instantiation of the Swiss-table engine.
+; Native-only: bytecode has no SIMD support (link-time failure), and
+; the [@@builtin] externals need the abort()-stub C symbols.
+(library
+ (name swiss_neon)
+ (enabled_if
+  (= %{architecture} arm64))
+ (modes native)
+ (libraries swiss_core)
+ (foreign_stubs
+  (language c)
+  (names neon_stubs)))
+
+(rule
+ (target swiss_neon.ml)
+ (deps group_neon.inc ../lib/core/engine_template.inc)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo
+     "(* GENERATED from lib_neon/group_neon.inc + lib/core/engine_template.inc by the rule in lib_neon/dune — do not edit.\n   NEON 16-wide instantiation of the Swiss-table engine (arm64, native-only). *)\n\nopen! Stdlib\n\nmodule G = struct\n")
+    (cat group_neon.inc)
+    (echo "\nend\n\nopen! Swiss_core.Core_impl\n\n")
+    (cat ../lib/core/engine_template.inc)))))

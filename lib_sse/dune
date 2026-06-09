@@ -1,0 +1,32 @@
+; SSE2 (amd64) 16-wide instantiation of the Swiss-table engine —
+; mirrors lib_neon/dune. Native-only AND amd64-only: bytecode has no
+; SIMD support, the SSE [@@builtin] externals are a hard codegen error
+; on other architectures ("External annotated with [@@builtin] is not
+; recognized"), and linking needs the abort()-stub C symbols.
+; UNVERIFIED-ON-HW: this machine is arm64; CI must first pass
+; lib_sse/test_group_sse.ml on x86_64 (build command in its header)
+; before this library is trusted. See group_sse.inc's header.
+(library
+ (name swiss_sse)
+ (modes native)
+ (enabled_if
+  (= %{architecture} amd64))
+ (libraries swiss_core)
+ (foreign_stubs
+  (language c)
+  (names sse_stubs)))
+
+(rule
+ (target swiss_sse.ml)
+ (enabled_if
+  (= %{architecture} amd64))
+ (deps group_sse.inc ../lib/core/engine_template.inc)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo
+     "(* GENERATED from lib_sse/group_sse.inc + lib/core/engine_template.inc by the rule in lib_sse/dune — do not edit.\n   SSE2 16-wide instantiation of the Swiss-table engine (amd64, native-only). *)\n\nopen! Stdlib\n\nmodule G = struct\n")
+    (cat group_sse.inc)
+    (echo "\nend\n\nopen! Swiss_core.Core_impl\n\n")
+    (cat ../lib/core/engine_template.inc)))))

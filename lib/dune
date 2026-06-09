@@ -1,0 +1,22 @@
+(library
+ (name swiss)
+ (libraries swiss_core))
+
+; swiss.ml is generated: the group implementation and the engine
+; template are pasted into ONE compilation unit. Same-unit pasting is
+; what guarantees full inlining of the group ops into the probe loops:
+; flambda2 does not inline functor applications of this size, and
+; cross-unit calls returning unboxed tuples go through caml_apply
+; without inlining (verified by disassembly).
+(rule
+ (target swiss.ml)
+ (deps core/group_swar.inc core/engine_template.inc)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo
+     "(* GENERATED from lib/core/{group_swar,engine_template}.inc by the rule in lib/dune — do not edit.\n   Portable 8-wide SWAR instantiation of the Swiss-table engine. *)\n\nopen! Stdlib\n[@@@ocaml.flambda_o3]\n\nmodule G = struct\n")
+    (cat core/group_swar.inc)
+    (echo "\nend\n\nopen! Swiss_core.Core_impl\n\n")
+    (cat core/engine_template.inc)))))

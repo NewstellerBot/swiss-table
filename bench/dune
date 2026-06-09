@@ -1,0 +1,100 @@
+(library
+ (name bench_harness)
+ (modules bench_harness)
+ (libraries unix))
+
+(executable
+ (name bench)
+ (modules bench)
+ (libraries swiss bench_harness unix))
+
+(executable
+ (name allocprobe)
+ (modules allocprobe)
+ (libraries swiss))
+
+(executable
+ (name h2probe)
+ (modules h2probe)
+ (libraries swiss unix))
+
+; --- per-architecture SIMD instantiation (select picks whichever SIMD
+; library exists on this architecture; fallback prints a notice) ---
+
+(rule
+ (target bench_simd.neon.ml)
+ (deps bench_simd_body.inc)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Simd = Swiss_neon\n\nlet simd_label = \"Neon\"\n\n")
+    (cat bench_simd_body.inc)))))
+
+(rule
+ (target bench_simd.sse.ml)
+ (deps bench_simd_body.inc)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Simd = Swiss_sse\n\nlet simd_label = \"Sse\"\n\n")
+    (cat bench_simd_body.inc)))))
+
+(rule
+ (target bench_simd.none.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let () = print_endline \"bench_simd: no SIMD variant on this architecture\"\n"))))
+
+(executable
+ (name bench_simd)
+ (modules bench_simd)
+ (libraries
+  bench_harness
+  unix
+  (select
+   bench_simd.ml
+   from
+   (swiss_neon -> bench_simd.neon.ml)
+   (swiss_sse -> bench_simd.sse.ml)
+   (-> bench_simd.none.ml))))
+
+(rule
+ (target allocprobe_simd.neon.ml)
+ (deps allocprobe.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_neon\n\n")
+    (cat allocprobe.ml)))))
+
+(rule
+ (target allocprobe_simd.sse.ml)
+ (deps allocprobe.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_sse\n\n")
+    (cat allocprobe.ml)))))
+
+(rule
+ (target allocprobe_simd.none.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let () = print_endline \"allocprobe_simd: no SIMD variant on this architecture\"\n"))))
+
+(executable
+ (name allocprobe_simd)
+ (modules allocprobe_simd)
+ (libraries
+  (select
+   allocprobe_simd.ml
+   from
+   (swiss_neon -> allocprobe_simd.neon.ml)
+   (swiss_sse -> allocprobe_simd.sse.ml)
+   (-> allocprobe_simd.none.ml))))

@@ -1,0 +1,94 @@
+(test
+ (name test_smoke)
+ (modules test_smoke)
+ (libraries swiss))
+
+(test
+ (name test_diff)
+ (modules test_diff)
+ (libraries swiss))
+
+(test
+ (name test_unit)
+ (modules test_unit)
+ (libraries swiss))
+
+; --- SIMD instantiation: the same suites run against whichever SIMD
+; library exists on this architecture (Swiss_neon on arm64, Swiss_sse
+; on amd64), via a module-alias prelude; no-op elsewhere. ---
+
+(rule
+ (target test_smoke_simd.neon.ml)
+ (deps test_smoke.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_neon\n\n")
+    (cat test_smoke.ml)))))
+
+(rule
+ (target test_smoke_simd.sse.ml)
+ (deps test_smoke.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_sse\n\n")
+    (cat test_smoke.ml)))))
+
+(rule
+ (target test_smoke_simd.none.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let () = print_endline \"test_smoke_simd: no SIMD variant on this architecture\"\n"))))
+
+(test
+ (name test_smoke_simd)
+ (modules test_smoke_simd)
+ (libraries
+  (select
+   test_smoke_simd.ml
+   from
+   (swiss_neon -> test_smoke_simd.neon.ml)
+   (swiss_sse -> test_smoke_simd.sse.ml)
+   (-> test_smoke_simd.none.ml))))
+
+(rule
+ (target test_diff_simd.neon.ml)
+ (deps test_diff.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_neon\n\n")
+    (cat test_diff.ml)))))
+
+(rule
+ (target test_diff_simd.sse.ml)
+ (deps test_diff.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "module Swiss = Swiss_sse\n\n")
+    (cat test_diff.ml)))))
+
+(rule
+ (target test_diff_simd.none.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let () = print_endline \"test_diff_simd: no SIMD variant on this architecture\"\n"))))
+
+(test
+ (name test_diff_simd)
+ (modules test_diff_simd)
+ (libraries
+  (select
+   test_diff_simd.ml
+   from
+   (swiss_neon -> test_diff_simd.neon.ml)
+   (swiss_sse -> test_diff_simd.sse.ml)
+   (-> test_diff_simd.none.ml))))
