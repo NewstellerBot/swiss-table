@@ -85,11 +85,15 @@ jobs:
       - name: SSE2 group selftest (x86_64)
         if: contains(matrix.platform, 'x86_64')
         run: |
+          # opam's switch is local to the workspace: capture its env
+          # BEFORE leaving the directory (opam exec resolves the switch
+          # from the CWD and finds nothing under /tmp).
+          eval "$(opam env)"
           tmp="$(mktemp -d)"
           { echo 'open! Stdlib'; echo 'module G = struct'; cat lib_sse/group_sse.inc; echo 'end'; cat lib_sse/test_group_sse.ml; } > "$tmp/test_group_sse_main.ml"
           cp lib_sse/sse_stubs.c "$tmp/"
           cd "$tmp"
-          opam exec -- ocamlopt -O3 -extension simd sse_stubs.c test_group_sse_main.ml -o test_group_sse_main
+          ocamlopt -O3 -extension simd sse_stubs.c test_group_sse_main.ml -o test_group_sse_main
           ./test_group_sse_main
 
       # Differential fuzzer (~4M ops vs Stdlib.Hashtbl, both the SWAR
