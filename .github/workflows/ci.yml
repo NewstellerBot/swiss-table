@@ -14,17 +14,7 @@ on:
 jobs:
   build:
     name: ${{ matrix.platform }}
-    # Default: GitHub-hosted runners (work for any repo, free for
-    # public ones, incl. arm64 Linux). Opt-in: set the repository
-    # variable USE_BLACKSMITH=true to move the Linux legs to
-    # Blacksmith (faster machines; transparent cache proxy covers
-    # setup-ocaml's opam caching with a 25 GB limit) — requires the
-    # repo to live in a GitHub ORG with the blacksmith-sh App
-    # installed, otherwise those jobs queue forever. macOS always
-    # stays GitHub-hosted: Blacksmith has no Intel macs, and its
-    # Apple-Silicon runners are paid while GitHub macOS is free for
-    # public repos.
-    runs-on: ${{ vars.USE_BLACKSMITH == 'true' && matrix.blacksmith || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     # Cold toolchain build (full OxCaml compiler bootstrap) is ~35-90
     # min depending on platform; warm opam cache restores in ~1-3 min.
     timeout-minutes: 180
@@ -33,23 +23,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux-x86_64
-            runner: ubuntu-24.04
-            blacksmith: blacksmith-4vcpu-ubuntu-2404
+          - { platform: linux-x86_64, runner: ubuntu-24.04 }
           # free for public repos
-          - platform: linux-arm64
-            runner: ubuntu-24.04-arm
-            blacksmith: blacksmith-4vcpu-ubuntu-2404-arm
+          - { platform: linux-arm64, runner: ubuntu-24.04-arm }
           # pinned: macos-latest migrates to macOS 26 from 2026-06-15
-          - platform: macos-arm64
-            runner: macos-15
-            blacksmith: macos-15
+          - { platform: macos-arm64, runner: macos-15 }
           # last free Intel macs (until Aug 2027). Upstream: "x86 macOS
           # may still work" — not CI-tested by oxcaml itself.
-          - platform: macos-x86_64
-            runner: macos-15-intel
-            blacksmith: macos-15-intel
-            experimental: true
+          - { platform: macos-x86_64, runner: macos-15-intel, experimental: true }
     steps:
       - uses: actions/checkout@v6
 

@@ -146,15 +146,6 @@ OxCaml supports: Linux x86_64 (`ubuntu-24.04`), Linux arm64
 macOS x86_64 (`macos-15-intel`, experimental — upstream says "x86 macOS may
 still work" and doesn't CI it). Windows is unsupported by OxCaml.
 
-Optional: setting the repository variable `USE_BLACKSMITH=true` moves the
-Linux legs to Blacksmith runners (`blacksmith-4vcpu-ubuntu-2404` / `-arm` —
-faster machines, and their transparent cache proxy accelerates setup-ocaml's
-opam caching with a 25 GB limit). This requires the repo to live in a GitHub
-**organization** with the blacksmith-sh App installed (app.blacksmith.sh;
-free tier 3,000 min/month, no credit card) — on a personal-account repo the
-Blacksmith jobs queue forever, which is why GitHub-hosted is the default.
-Blacksmith has no Intel macs, so the macOS legs are always GitHub-hosted.
-
 Each job: provisions OxCaml 5.2.0+ox via `ocaml/setup-ocaml@v3` from the ox
 opam repository (~35–90 min cold compiler bootstrap, then cached; warm runs
 restore in minutes), builds, runs the **SSE2 hardware selftest** on x86_64
