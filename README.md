@@ -141,21 +141,19 @@ default (any arch, bytecode included).
 ## CI grid
 
 `.github/workflows/ci.yml` builds, tests, and benchmarks on every platform
-OxCaml supports: Linux x86_64 and arm64 on **Blacksmith** runners
-(`blacksmith-4vcpu-ubuntu-2404` / `-arm` — faster machines, and their
-transparent cache proxy accelerates setup-ocaml's opam caching with a 25 GB
-limit), macOS arm64 (`macos-15`) and macOS x86_64 (`macos-15-intel`,
-experimental — upstream says "x86 macOS may still work" and doesn't CI it)
-on GitHub-hosted runners (Blacksmith has no Intel macs, and GitHub macOS is
-free for public repos). Windows is unsupported by OxCaml.
+OxCaml supports: Linux x86_64 (`ubuntu-24.04`), Linux arm64
+(`ubuntu-24.04-arm`, free for public repos), macOS arm64 (`macos-15`), and
+macOS x86_64 (`macos-15-intel`, experimental — upstream says "x86 macOS may
+still work" and doesn't CI it). Windows is unsupported by OxCaml.
 
-Blacksmith setup (one-time): the repo must live in a GitHub **organization**
-(Blacksmith doesn't serve personal-account repos); sign in at
-app.blacksmith.sh and install the blacksmith-sh GitHub App on the org with
-access to this repo. Free tier: 3,000 minutes/month, no credit card. Fork
-PRs run fine in the base repo's context; CI inside a fork (or during a
-Blacksmith outage) can set the repository variable `USE_GITHUB_RUNNERS=true`
-to fall back to GitHub-hosted Linux runners.
+Optional: setting the repository variable `USE_BLACKSMITH=true` moves the
+Linux legs to Blacksmith runners (`blacksmith-4vcpu-ubuntu-2404` / `-arm` —
+faster machines, and their transparent cache proxy accelerates setup-ocaml's
+opam caching with a 25 GB limit). This requires the repo to live in a GitHub
+**organization** with the blacksmith-sh App installed (app.blacksmith.sh;
+free tier 3,000 min/month, no credit card) — on a personal-account repo the
+Blacksmith jobs queue forever, which is why GitHub-hosted is the default.
+Blacksmith has no Intel macs, so the macOS legs are always GitHub-hosted.
 
 Each job: provisions OxCaml 5.2.0+ox via `ocaml/setup-ocaml@v3` from the ox
 opam repository (~35–90 min cold compiler bootstrap, then cached; warm runs

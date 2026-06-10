@@ -14,18 +14,17 @@ on:
 jobs:
   build:
     name: ${{ matrix.platform }}
-    # Linux runs on Blacksmith (faster machines; their transparent
-    # cache proxy accelerates setup-ocaml's internal actions/cache
-    # calls with a 25 GB limit, zero workflow changes). Requires the
-    # blacksmith-sh GitHub App installed on the org that owns this
-    # repo — Blacksmith does not serve personal-account repos. macOS
-    # stays on GitHub-hosted runners: Blacksmith has no Intel macs,
-    # and its Apple-Silicon runners are paid while GitHub macOS is
-    # free for public repos.
-    # Escape hatch (forks / Blacksmith outage): set the repository
-    # variable USE_GITHUB_RUNNERS=true to fall back to GitHub-hosted
-    # runners for the Linux legs.
-    runs-on: ${{ vars.USE_GITHUB_RUNNERS == 'true' && matrix.fallback || matrix.runner }}
+    # Default: GitHub-hosted runners (work for any repo, free for
+    # public ones, incl. arm64 Linux). Opt-in: set the repository
+    # variable USE_BLACKSMITH=true to move the Linux legs to
+    # Blacksmith (faster machines; transparent cache proxy covers
+    # setup-ocaml's opam caching with a 25 GB limit) — requires the
+    # repo to live in a GitHub ORG with the blacksmith-sh App
+    # installed, otherwise those jobs queue forever. macOS always
+    # stays GitHub-hosted: Blacksmith has no Intel macs, and its
+    # Apple-Silicon runners are paid while GitHub macOS is free for
+    # public repos.
+    runs-on: ${{ vars.USE_BLACKSMITH == 'true' && matrix.blacksmith || matrix.runner }}
     # Cold toolchain build (full OxCaml compiler bootstrap) is ~35-90
     # min depending on platform; warm opam cache restores in ~1-3 min.
     timeout-minutes: 180
@@ -35,20 +34,21 @@ jobs:
       matrix:
         include:
           - platform: linux-x86_64
-            runner: blacksmith-4vcpu-ubuntu-2404
-            fallback: ubuntu-24.04
+            runner: ubuntu-24.04
+            blacksmith: blacksmith-4vcpu-ubuntu-2404
+          # free for public repos
           - platform: linux-arm64
-            runner: blacksmith-4vcpu-ubuntu-2404-arm
-            fallback: ubuntu-24.04-arm
+            runner: ubuntu-24.04-arm
+            blacksmith: blacksmith-4vcpu-ubuntu-2404-arm
           # pinned: macos-latest migrates to macOS 26 from 2026-06-15
           - platform: macos-arm64
             runner: macos-15
-            fallback: macos-15
+            blacksmith: macos-15
           # last free Intel macs (until Aug 2027). Upstream: "x86 macOS
           # may still work" — not CI-tested by oxcaml itself.
           - platform: macos-x86_64
             runner: macos-15-intel
-            fallback: macos-15-intel
+            blacksmith: macos-15-intel
             experimental: true
     steps:
       - uses: actions/checkout@v6
