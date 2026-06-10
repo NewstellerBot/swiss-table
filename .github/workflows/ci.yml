@@ -79,11 +79,16 @@ jobs:
       # First-run hardware validation of the SSE2 builtins: group_sse
       # was derived from the amd64 backend sources on an arm64 machine
       # and has never executed on real x86 silicon until this step.
+      # Built in a temp dir: compiling in lib_sse/ leaves sse_stubs.o
+      # etc. in the source tree, which dune then rejects as a duplicate
+      # rule for the swiss_sse library's foreign stubs.
       - name: SSE2 group selftest (x86_64)
         if: contains(matrix.platform, 'x86_64')
-        working-directory: lib_sse
         run: |
-          { echo 'open! Stdlib'; echo 'module G = struct'; cat group_sse.inc; echo 'end'; cat test_group_sse.ml; } > test_group_sse_main.ml
+          tmp="$(mktemp -d)"
+          { echo 'open! Stdlib'; echo 'module G = struct'; cat lib_sse/group_sse.inc; echo 'end'; cat lib_sse/test_group_sse.ml; } > "$tmp/test_group_sse_main.ml"
+          cp lib_sse/sse_stubs.c "$tmp/"
+          cd "$tmp"
           opam exec -- ocamlopt -O3 -extension simd sse_stubs.c test_group_sse_main.ml -o test_group_sse_main
           ./test_group_sse_main
 
